@@ -1,0 +1,7 @@
+[[language]]
+name = "rust"
+
+[language-server.rust-analyzer.config]
+cargo.target = "thumbv7em-none-eabihf"
+checkOnSave.allTargets = false
+

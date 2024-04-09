@@ -1,0 +1,21 @@
+[package]
+name = "hal-core"
+version = "0.1.0"
+edition = "2021"
+
+[[test]]
+name = "integration"
+harness = false
+
+[dependencies]
+defmt = { version = "0.3", features = ["encoding-rzcobs"] }
+embedded-time = "0.12.1"
+fugit = "0.3.7"
+hal-macro = { path = "../macro" }
+samv71-pac = { path = "../../../../samv71-pac", features = ["rt", "critical-section"] }
+smoltcp = { version = "0.11.0", default-features = false, features = ["medium-ethernet","proto-ipv6"] }
+
+[dev-dependencies]
+defmt-rtt = "0.4.0"
+defmt-test = "0.3.1"
+panic-probe = { version = "0.3", features = ["print-defmt"] }

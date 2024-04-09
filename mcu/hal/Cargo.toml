@@ -1,0 +1,8 @@
+[package]
+name = "hal"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+hal-core = { path = "core/" }
+hal-macro = { path = "macro/" }

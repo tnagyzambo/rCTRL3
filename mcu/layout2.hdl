@@ -1,0 +1,12 @@
+layout {
+    pane split_direction="vertical" {
+        pane edit="app/src/main.rs"
+        pane command="cargo" {
+            args "build" "--bin" "app"
+            start_suspended true
+        }
+    }
+    pane size=1 borderless=true {
+        plugin location="zellij:compact-bar"
+    }
+}
