@@ -1,0 +1,47 @@
+[default.general]
+chip = "ATSAMV71Q21B"
+#connect_under_reset = true
+#log_level = "DEBUG"
+
+[default.probe]
+protocol = "Swd"
+speed = 300 # kHz
+
+[default.rtt]
+# Whether or not an RTTUI should be opened after flashing.
+enabled = true
+# How the target handles RTT outputs that won't fit in the buffer.  This can be
+# overridden per-channel. If left unset, the firmware will determine the default
+# for each RTT up channel.
+#   NoBlockSkip - Skip writing the data completely if it doesn't fit in its
+#                 entirety.
+#   NoBlockTrim - Write as much as possible of the data and ignore the rest.
+#   BlockIfFull - Spin until the host reads data.  Can result in app freezing.
+#
+# up_mode = "BlockIfFull"
+
+# A list of channel associations to be displayed. If left empty, all channels are displayed.
+# up, down (Optional) - RTT channel numbers
+# name     (Optional) - String to be displayed in the RTTUI tab
+# up_mode  (Optional) - RTT channel specific as described above
+# format   (Required) - How to interpret data from target firmware.  One of:
+#              String - Directly show output from the target
+#              Defmt  - Format output on the host, see https://defmt.ferrous-systems.com/
+#              BinaryLE - Display as raw hex
+channels = [
+   { up = 0, down = 0, name = "rtt", format = "Defmt" },
+]
+# The duration in ms for which the logger should retry to attach to RTT.
+timeout = 3000
+# Whether timestamps in the RTTUI are enabled
+show_timestamps = true
+# Whether to save rtt history buffer on exit.
+log_enabled = true
+# Where to save rtt history buffer relative to manifest path.
+log_path = "./logs"
+
+[default.gdb]
+# Whether or not a GDB server should be opened after flashing.
+enabled = false
+# The connection string in host:port format wher the GDB server will open a socket.
+gdb_connection_string = "127.0.0.1:3333"
