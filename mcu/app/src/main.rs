@@ -10,7 +10,12 @@ use panic_probe as _;
 )]
 mod app {
     use core::sync::atomic::{AtomicUsize, Ordering};
-    use hal::{rtt::Rtt, *};
+    use hal::uart;
+    use hal::{
+        dma::Dma,
+        rtt::Rtt,
+        uart::{Uart0, UartInterrupt},
+    };
     use rtic_monotonics::systick::*;
     use samv71_pac as pac;
 
@@ -24,16 +29,20 @@ mod app {
     #[shared]
     struct Shared {
         active: bool,
+        uart: Uart0<2, 1>,
         //led: Pin<PA23, Output>,
     }
 
     #[local]
     struct Local {
+        data: u8,
         banka: pac::PIOA,
     }
 
-    #[init()]
+    #[init(local = [uart_storage: uart::Storage<2, 1> = uart::Storage::default()])]
     fn init(mut ctx: init::Context) -> (Shared, Local) {
+        let init::LocalResources { uart_storage, .. } = ctx.local;
+
         // Init start
         defmt::info!("INIT");
 
@@ -42,6 +51,9 @@ mod app {
 
         // Init GPIO
         ctx.device = init_gpio(ctx.device);
+
+        // Init UART
+        ctx.device = init_uart(ctx.device);
 
         // TODO: Move SysTick cofig to function
         // Create SysTick monotonic
@@ -59,10 +71,17 @@ mod app {
         // Init RTT
         let rtt = Rtt::new(ctx.device.RTT, F_SLCK, 3);
 
+        // DMA
+        let dma = Dma::new(ctx.device.XDMAC);
+
+        // UART
+        let uart = Uart0::new(ctx.device.UART2, uart_storage, &dma);
+
         (
-            Shared { active: true },
+            Shared { active: true, uart },
             Local {
                 banka: ctx.device.PIOA,
+                data: 0u8,
             },
         )
     }
@@ -124,6 +143,7 @@ mod app {
         while device.PMC.sr().read().mckrdy().bit_is_clear() {}
 
         defmt::info!("MCK SET");
+
         device
     }
 
@@ -137,57 +157,60 @@ mod app {
         // Clear PIO interupts
         unsafe {
             pac::NVIC::unmask(pac::Interrupt::PIOA); // Enable PIO interrupt in the NVIC
-            pac::NVIC::unmask(pac::Interrupt::PIOD);
             pac::NVIC::unpend(pac::Interrupt::PIOA); // Unpend PIOA interrupts
-            pac::NVIC::unpend(pac::Interrupt::PIOD);
             (*pac::PIOA::PTR).isr().read().bits(); // Clear ISRs
-            (*pac::PIOD::PTR).isr().read().bits();
         }
 
         // Enable pull-up resistor
-        device.PIOA.puer().write(|w| {
-            w.p9().set_bit();
-            w.p19().set_bit()
-        });
+        device.PIOA.puer().write(|w| w.p9().set_bit());
 
         // Enable input filter slow clock (debouncing filter)
-        device.PIOA.ifscer().write(|w| {
-            w.p9().set_bit();
-            w.p19().set_bit()
-        });
+        device.PIOA.ifscer().write(|w| w.p9().set_bit());
 
         // Set debounce duration
         device.PIOA.scdr().write(|w| unsafe { w.bits(0x50) });
 
         // Enable input filter
-        device.PIOA.ifer().write(|w| {
-            w.p9().set_bit();
-            w.p19().set_bit()
-        });
+        device.PIOA.ifer().write(|w| w.p9().set_bit());
 
         // Edge event detection
-        device.PIOA.esr().write(|w| {
-            w.p9().set_bit();
-            w.p19().set_bit()
-        });
+        device.PIOA.esr().write(|w| w.p9().set_bit());
 
         // Enable single edge detection
-        device.PIOA.aimer().write(|w| {
-            w.p9().set_bit();
-            w.p19().set_bit()
-        });
+        device.PIOA.aimer().write(|w| w.p9().set_bit());
 
         // Rising edge event detection
         device.PIOA.rehlsr().write(|w| w.p9().set_bit());
 
-        // Low level detection
-        device.PIOA.fellsr().write(|w| w.p19().set_bit());
-
         // Enable input interrupt
-        device.PIOA.ier().write(|w| {
-            w.p9().set_bit();
-            w.p19().set_bit()
+        device.PIOA.ier().write(|w| w.p9().set_bit());
+
+        // TODO: Set UART pin device modes
+        device.PIOD.abcdsr(0).write(|w| {
+            w.p25().clear_bit();
+            w.p26().clear_bit()
         });
+        device.PIOD.abcdsr(1).write(|w| {
+            w.p25().set_bit();
+            w.p26().set_bit()
+        });
+        device.PIOD.pdr().write(|w| {
+            w.p25().set_bit();
+            w.p26().set_bit()
+        });
+
+        device
+    }
+
+    fn init_uart(device: pac::Peripherals) -> pac::Peripherals {
+        // Enable peripheral clock
+        device.PMC.pcer1().write(|w| {
+            w.pid44().set_bit() // UART2
+        });
+
+        unsafe {
+            pac::NVIC::unmask(pac::Interrupt::UART2); // Enable PIO interrupt in the NVIC
+        }
 
         device
     }
@@ -199,13 +222,41 @@ mod app {
         }
     }
 
+    #[task(binds = UART2, shared = [uart])]
+    fn handle_uart(ctx: handle_uart::Context) {
+        let handle_uart::SharedResources { mut uart, .. } = ctx.shared;
+
+        let interrupts = uart.lock(|u| u.interrupts());
+
+        for interrupt in interrupts {
+            match interrupt {
+                //UartInterrupt::CMP => defmt::info!("CMP"),
+                //UartInterrupt::TXEMTPY => defmt::info!("TXEMPTY"),
+                UartInterrupt::PARE => defmt::info!("PARE"),
+                UartInterrupt::FRAME => defmt::info!("FRAME"),
+                UartInterrupt::OVRE => defmt::info!("OVRE"),
+                // UartInterrupt::TXRDY => defmt::info!("TXRDY"),
+                // UartInterrupt::RXRDY => defmt::info!("RXRDY"),
+                _ => (),
+            }
+        }
+    }
+
     // Handle button press
-    #[task(binds = PIOA, local = [banka], shared = [])]
+    #[task(binds = PIOA, local = [banka, data], shared = [uart])]
     fn button(ctx: button::Context) {
-        match ctx.local.banka.isr().read().bits() {
+        let button::LocalResources { banka, data, .. } = ctx.local;
+        let button::SharedResources { mut uart, .. } = ctx.shared;
+
+        match banka.isr().read().bits() {
             0x200 => {
                 // button
-                //defmt::info!("RTT: {}ms", rtt.lock(|rtt| rtt.millis()));
+                uart.lock(|uart| {
+                    uart.write(*data);
+                    defmt::info!("WRITE: {:#x}", data);
+                    defmt::info!("READ: {:#x}", uart.read());
+                    *data += 1;
+                });
             }
             _ => (),
         }
