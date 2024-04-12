@@ -13,11 +13,12 @@ mod app {
     use hal::uart;
     use hal::{
         dma::Dma,
-        rtt::Rtt,
+        rtt::{Rtt, RttInterrupt},
         uart::{Uart0, UartInterrupt},
     };
     use rtic_monotonics::systick::*;
     use samv71_pac as pac;
+    use you_must_enable_the_rt_feature_for_the_pac_in_your_cargo_toml::TWIHS0;
 
     const F_SLCK: u32 = 32768; // 32.768 kHz
 
@@ -30,13 +31,13 @@ mod app {
     struct Shared {
         active: bool,
         uart: Uart0<2, 1>,
-        //led: Pin<PA23, Output>,
     }
 
     #[local]
     struct Local {
         data: u8,
         banka: pac::PIOA,
+        rtt: Rtt,
     }
 
     #[init(local = [uart_storage: uart::Storage<2, 1> = uart::Storage::default()])]
@@ -54,6 +55,9 @@ mod app {
 
         // Init UART
         ctx.device = init_uart(ctx.device);
+
+        // Init I2C
+        ctx.device = init_i2c(ctx.device);
 
         // TODO: Move SysTick cofig to function
         // Create SysTick monotonic
@@ -77,28 +81,62 @@ mod app {
         // UART
         let uart = Uart0::new(ctx.device.UART2, uart_storage, &dma);
 
+        rtt.rtt.ar().write(|w| unsafe { w.almv().bits(5000) });
+
         (
             Shared { active: true, uart },
             Local {
                 banka: ctx.device.PIOA,
                 data: 0u8,
+                rtt,
             },
         )
     }
 
     // Handle RTT interrupts
-    #[task(binds = RTT, shared = [])]
+    #[task(binds = RTT, local = [rtt])]
     fn rtt_interrupt_handler(ctx: rtt_interrupt_handler::Context) {
-        //let rtt_interrupt_handler::SharedResources { mut rtt, .. } = ctx.shared;
+        let rtt_interrupt_handler::LocalResources { mut rtt, .. } = ctx.local;
 
-        //rtt.lock(|rtt| {
-        //    for interrupt in rtt.interrupts() {
-        //        match interrupt {
-        //            rtt::RttInterrupt::RTTINC => (),
-        //            rtt::RttInterrupt::ALMS => (),
-        //        }
-        //    }
-        //});
+        for interrupt in rtt.interrupts() {
+            match interrupt {
+                RttInterrupt::RTTINC => (),
+                RttInterrupt::ALMS => {
+                    // Flash LED
+                    let pioa = unsafe { &*pac::PIOA::PTR };
+                    if pioa.odsr().read().p23().bit_is_clear() {
+                        pioa.sodr().write(|w| w.p23().set_bit());
+                    } else {
+                        pioa.codr().write(|w| w.p23().set_bit());
+                    }
+
+                    // I2C
+                    let i2c = unsafe { &*TWIHS0::PTR };
+                    i2c.mmr().modify(|_, w| w.mread().set_bit());
+                    i2c.iadr().write(|w| unsafe { w.iadr().bits(0x1A) });
+                    i2c.cr().write(|w| w.start().set_bit());
+                    while i2c.sr().read().rxrdy().bit_is_clear() {}
+                    let l = i2c.rhr().read().rxdata().bits() as u16;
+                    i2c.iadr().write(|w| unsafe { w.iadr().bits(0x1B) });
+                    i2c.cr().write(|w| w.start().set_bit());
+                    while i2c.sr().read().rxrdy().bit_is_clear() {}
+                    let h = i2c.rhr().read().rxdata().bits() as u16;
+                    let gyro: u16 = (h << 8) | l;
+                    let gyro = if gyro & (1 << 15) != 0 {
+                        // Negative number, invert and add 1
+                        !(gyro ^ 0xFFFF) + 1
+                    } else {
+                        // Positive number, return as is
+                        gyro
+                    };
+                    defmt::info!("I2C GYRO: {:#x}", gyro);
+
+                    // Restart timer
+                    rtt.rtt.mr().modify(|_, w| w.rttrst().set_bit());
+                    rtt.rtt.ar().write(|w| unsafe { w.almv().bits(5000) });
+                }
+            }
+        }
     }
 
     fn init_clocks(device: pac::Peripherals) -> pac::Peripherals {
@@ -185,6 +223,22 @@ mod app {
         // Enable input interrupt
         device.PIOA.ier().write(|w| w.p9().set_bit());
 
+        // LED
+        device.PIOA.oer().write(|w| w.p23().set_bit());
+
+        device
+    }
+
+    fn init_uart(device: pac::Peripherals) -> pac::Peripherals {
+        // Enable peripheral clock
+        device.PMC.pcer1().write(|w| {
+            w.pid44().set_bit() // UART2
+        });
+
+        unsafe {
+            pac::NVIC::unmask(pac::Interrupt::UART2); // Enable interrupt in the NVIC
+        }
+
         // TODO: Set UART pin device modes
         device.PIOD.abcdsr(0).write(|w| {
             w.p25().clear_bit();
@@ -202,15 +256,68 @@ mod app {
         device
     }
 
-    fn init_uart(device: pac::Peripherals) -> pac::Peripherals {
+    fn init_i2c(device: pac::Peripherals) -> pac::Peripherals {
         // Enable peripheral clock
-        device.PMC.pcer1().write(|w| {
-            w.pid44().set_bit() // UART2
+        device.PMC.pcer0().write(|w| {
+            w.pid19().set_bit() // TWIHS0
         });
 
         unsafe {
-            pac::NVIC::unmask(pac::Interrupt::UART2); // Enable PIO interrupt in the NVIC
+            //pac::NVIC::unmask(pac::Interrupt::TWIHS0); // Enable interrupt in the NVIC
         }
+
+        // Pull up res
+        device.PIOA.puer().write(|w| w.p3().set_bit());
+        device.PIOA.puer().write(|w| w.p4().set_bit());
+
+        // Peripheral mode A
+        device.PIOA.abcdsr(0).write(|w| {
+            w.p3().clear_bit();
+            w.p4().clear_bit()
+        });
+        device.PIOA.abcdsr(1).write(|w| {
+            w.p3().clear_bit();
+            w.p4().clear_bit()
+        });
+        device.PIOA.pdr().write(|w| {
+            w.p3().set_bit();
+            w.p4().set_bit()
+        });
+
+        let i2c = unsafe { &*TWIHS0::PTR };
+        i2c.mmr().write(|w| {
+            unsafe { w.dadr().bits(0x6B) };
+            w.mread().clear_bit();
+            w.iadrsz()._1_byte()
+        });
+
+        // Try to find a valid clock configuration. From §43.8.5 we
+        // have
+        //
+        //    DIV * 2^CKDIV = (f_pid / f_twi / 2) - 3
+        //
+        // where DIV = CHDIV = CLDIV.
+        //
+        // We thus iterate over possible values of CKDIV and use the
+        // first valid permutation of (CKIV, DIV), unless options are
+        // exhausted.
+
+        i2c.cwgr().write(|w| {
+            unsafe { w.ckdiv().bits(6) };
+            unsafe { w.chdiv().bits(1) };
+            unsafe { w.cldiv().bits(1) }
+        });
+
+        i2c.cr().write(|w| {
+            w.svdis().set_bit();
+            w.msen().set_bit()
+        });
+
+        i2c.iadr().write(|w| unsafe { w.iadr().bits(0x10) });
+        i2c.thr().write(|w| unsafe { w.bits(0b00100000) });
+        i2c.cr().write(|w| w.stop().set_bit());
+        while i2c.sr().read().txrdy().bit_is_clear() {}
+        while i2c.sr().read().txcomp().bit_is_clear() {}
 
         device
     }
@@ -250,6 +357,8 @@ mod app {
 
         match banka.isr().read().bits() {
             0x200 => {
+                defmt::info!("BUTTON");
+
                 // button
                 uart.lock(|uart| {
                     uart.write(*data);

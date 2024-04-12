@@ -14,7 +14,7 @@ pub enum RttInterrupt {
 }
 
 pub struct Rtt {
-    rtt: RTT,
+    pub rtt: RTT,
     f_slck: u32,
     res: u32,
 }
@@ -33,6 +33,7 @@ impl Rtt {
 
         rtt.mr().modify(|_, w| {
             w.rttrst().set_bit(); // Reset RTT
+            w.almien().set_bit();
             unsafe { w.rtpres().bits(res as u16) } // Set RTT period to 91.55us (RTPRES * SLCK)
         });
 
