@@ -5,20 +5,20 @@ use defmt_rtt as _;
 use panic_probe as _;
 
 #[rtic::app(
-    device = samv71_pac,
+    device = hal::pac,
+    peripherals = true,
     dispatchers = [IXC]
 )]
 mod app {
     use core::sync::atomic::{AtomicUsize, Ordering};
+    use hal::pio::PeripheralA;
     use hal::uart;
     use hal::{
-        dma::Dma,
+        pio::*,
         rtt::{Rtt, RttInterrupt},
         uart::{Uart0, UartInterrupt},
     };
     use rtic_monotonics::systick::*;
-    use samv71_pac as pac;
-    use you_must_enable_the_rt_feature_for_the_pac_in_your_cargo_toml::TWIHS0;
 
     const F_SLCK: u32 = 32768; // 32.768 kHz
 
@@ -35,8 +35,10 @@ mod app {
 
     #[local]
     struct Local {
+        led: Pin<PA23, Output>,
+        button: Pin<PA9, Input>,
         data: u8,
-        banka: pac::PIOA,
+        banka: Bank<BankA>,
         rtt: Rtt,
     }
 
@@ -51,7 +53,17 @@ mod app {
         ctx.device = init_clocks(ctx.device);
 
         // Init GPIO
-        ctx.device = init_gpio(ctx.device);
+        let banka = Bank::<BankA>::init();
+        banka.set_debounce_period(0x50);
+        banka.enable_interrupts();
+
+        let sda = Pin::<PA3, PeripheralA>::init().enable_pullup();
+        let scl = Pin::<PA4, PeripheralA>::init().enable_pullup();
+        let button = Pin::<PA9, Input>::init();
+        button.enable_pullup();
+        button.enable_debounce_filter();
+        button.enable_rising_edge_interrupt();
+        let led = Pin::<PA23, Output>::init();
 
         // Init UART
         ctx.device = init_uart(ctx.device);
@@ -67,7 +79,7 @@ mod app {
         // Disable SysTick counter
         // Otherwise SysTick will keep system from sleeping
         unsafe {
-            (*pac::SYS_TICK::PTR)
+            (*hal::pac::SYS_TICK::PTR)
                 .csr()
                 .write(|w| w.enable().clear_bit())
         };
@@ -75,18 +87,17 @@ mod app {
         // Init RTT
         let rtt = Rtt::new(ctx.device.RTT, F_SLCK, 3);
 
-        // DMA
-        let dma = Dma::new(ctx.device.XDMAC);
-
         // UART
-        let uart = Uart0::new(ctx.device.UART2, uart_storage, &dma);
+        let uart = Uart0::new(ctx.device.UART2, uart_storage);
 
         rtt.rtt.ar().write(|w| unsafe { w.almv().bits(5000) });
 
         (
             Shared { active: true, uart },
             Local {
-                banka: ctx.device.PIOA,
+                led,
+                button,
+                banka,
                 data: 0u8,
                 rtt,
             },
@@ -94,24 +105,19 @@ mod app {
     }
 
     // Handle RTT interrupts
-    #[task(binds = RTT, local = [rtt])]
+    #[task(binds = RTT, local = [rtt, led])]
     fn rtt_interrupt_handler(ctx: rtt_interrupt_handler::Context) {
-        let rtt_interrupt_handler::LocalResources { mut rtt, .. } = ctx.local;
+        let rtt_interrupt_handler::LocalResources { rtt, led, .. } = ctx.local;
 
         for interrupt in rtt.interrupts() {
             match interrupt {
                 RttInterrupt::RTTINC => (),
                 RttInterrupt::ALMS => {
                     // Flash LED
-                    let pioa = unsafe { &*pac::PIOA::PTR };
-                    if pioa.odsr().read().p23().bit_is_clear() {
-                        pioa.sodr().write(|w| w.p23().set_bit());
-                    } else {
-                        pioa.codr().write(|w| w.p23().set_bit());
-                    }
+                    led.toggle();
 
                     // I2C
-                    let i2c = unsafe { &*TWIHS0::PTR };
+                    let i2c = unsafe { &*hal::pac::TWIHS0::PTR };
                     i2c.mmr().modify(|_, w| w.mread().set_bit());
                     i2c.iadr().write(|w| unsafe { w.iadr().bits(0x1A) });
                     i2c.cr().write(|w| w.start().set_bit());
@@ -139,7 +145,7 @@ mod app {
         }
     }
 
-    fn init_clocks(device: pac::Peripherals) -> pac::Peripherals {
+    fn init_clocks(device: hal::pac::Peripherals) -> hal::pac::Peripherals {
         // Setup clocks on SAMV71
         device.PMC.ckgr_mor().write(|w| {
             // Enable main crystal osc
@@ -185,58 +191,14 @@ mod app {
         device
     }
 
-    fn init_gpio(device: pac::Peripherals) -> pac::Peripherals {
-        // Enable peripheral clock
-        device.PMC.pcer0().write(|w| {
-            w.pid10().set_bit(); // PIOA
-            w.pid18().set_bit() // PIOD
-        });
-
-        // Clear PIO interupts
-        unsafe {
-            pac::NVIC::unmask(pac::Interrupt::PIOA); // Enable PIO interrupt in the NVIC
-            pac::NVIC::unpend(pac::Interrupt::PIOA); // Unpend PIOA interrupts
-            (*pac::PIOA::PTR).isr().read().bits(); // Clear ISRs
-        }
-
-        // Enable pull-up resistor
-        device.PIOA.puer().write(|w| w.p9().set_bit());
-
-        // Enable input filter slow clock (debouncing filter)
-        device.PIOA.ifscer().write(|w| w.p9().set_bit());
-
-        // Set debounce duration
-        device.PIOA.scdr().write(|w| unsafe { w.bits(0x50) });
-
-        // Enable input filter
-        device.PIOA.ifer().write(|w| w.p9().set_bit());
-
-        // Edge event detection
-        device.PIOA.esr().write(|w| w.p9().set_bit());
-
-        // Enable single edge detection
-        device.PIOA.aimer().write(|w| w.p9().set_bit());
-
-        // Rising edge event detection
-        device.PIOA.rehlsr().write(|w| w.p9().set_bit());
-
-        // Enable input interrupt
-        device.PIOA.ier().write(|w| w.p9().set_bit());
-
-        // LED
-        device.PIOA.oer().write(|w| w.p23().set_bit());
-
-        device
-    }
-
-    fn init_uart(device: pac::Peripherals) -> pac::Peripherals {
+    fn init_uart(device: hal::pac::Peripherals) -> hal::pac::Peripherals {
         // Enable peripheral clock
         device.PMC.pcer1().write(|w| {
             w.pid44().set_bit() // UART2
         });
 
         unsafe {
-            pac::NVIC::unmask(pac::Interrupt::UART2); // Enable interrupt in the NVIC
+            hal::pac::NVIC::unmask(hal::pac::Interrupt::UART2); // Enable interrupt in the NVIC
         }
 
         // TODO: Set UART pin device modes
@@ -256,35 +218,17 @@ mod app {
         device
     }
 
-    fn init_i2c(device: pac::Peripherals) -> pac::Peripherals {
+    fn init_i2c(device: hal::pac::Peripherals) -> hal::pac::Peripherals {
         // Enable peripheral clock
         device.PMC.pcer0().write(|w| {
             w.pid19().set_bit() // TWIHS0
         });
 
-        unsafe {
-            //pac::NVIC::unmask(pac::Interrupt::TWIHS0); // Enable interrupt in the NVIC
-        }
+        //unsafe {
+        //    pac::NVIC::unmask(pac::Interrupt::TWIHS0); // Enable interrupt in the NVIC
+        //}
 
-        // Pull up res
-        device.PIOA.puer().write(|w| w.p3().set_bit());
-        device.PIOA.puer().write(|w| w.p4().set_bit());
-
-        // Peripheral mode A
-        device.PIOA.abcdsr(0).write(|w| {
-            w.p3().clear_bit();
-            w.p4().clear_bit()
-        });
-        device.PIOA.abcdsr(1).write(|w| {
-            w.p3().clear_bit();
-            w.p4().clear_bit()
-        });
-        device.PIOA.pdr().write(|w| {
-            w.p3().set_bit();
-            w.p4().set_bit()
-        });
-
-        let i2c = unsafe { &*TWIHS0::PTR };
+        let i2c = unsafe { &*hal::pac::TWIHS0::PTR };
         i2c.mmr().write(|w| {
             unsafe { w.dadr().bits(0x6B) };
             w.mread().clear_bit();
@@ -350,22 +294,22 @@ mod app {
     }
 
     // Handle button press
-    #[task(binds = PIOA, local = [banka, data], shared = [uart])]
+    #[task(binds = PIOA, local = [button, banka, data], shared = [uart])]
     fn button(ctx: button::Context) {
         let button::LocalResources { banka, data, .. } = ctx.local;
         let button::SharedResources { mut uart, .. } = ctx.shared;
 
-        match banka.isr().read().bits() {
+        match banka.interrupts() {
             0x200 => {
                 defmt::info!("BUTTON");
 
                 // button
-                uart.lock(|uart| {
-                    uart.write(*data);
-                    defmt::info!("WRITE: {:#x}", data);
-                    defmt::info!("READ: {:#x}", uart.read());
-                    *data += 1;
-                });
+                //uart.lock(|uart| {
+                //    uart.write(*data);
+                //    defmt::info!("WRITE: {:#x}", data);
+                //    defmt::info!("READ: {:#x}", uart.read());
+                //    *data += 1;
+                //});
             }
             _ => (),
         }
