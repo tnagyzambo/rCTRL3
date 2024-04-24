@@ -1,8 +1,12 @@
-#![no_std]
-
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
-use syn::{parse_macro_input, DataEnum, DeriveInput, Fields, Ident};
+use std::collections::HashSet;
+use syn::{
+    parse::{Parse, ParseStream},
+    parse_macro_input,
+    punctuated::Punctuated,
+    DataEnum, DeriveInput, Fields, Ident, Result, Token, Type,
+};
 
 // TODO: Clean this up and make it more robust
 // This is an experiment in using proc macros to slightly
@@ -96,4 +100,53 @@ fn bit_field_iterator_impl(enum_ident: Ident, _data: DataEnum) -> TokenStream {
         }
     }
     .into()
+}
+
+// TODO: Clean this up
+// proc_macro to implement PinId for SAMV71 based on a list of their designators
+
+#[proc_macro]
+pub fn pins(tokens: TokenStream) -> TokenStream {
+    // Parse input into a list of arguements
+    let input = parse_macro_input!(tokens as Args);
+    let mut output = TokenStream::new();
+
+    for pin in input.pins {
+        let pin_string = pin.to_string();
+        let (bank, id) = pin_string.split_at(2);
+        let reg = Type::Verbatim(
+            format!("PIO{}::PTR", bank.chars().nth(1).unwrap())
+                .parse()
+                .unwrap(),
+        );
+        let id = id.parse::<u8>().unwrap();
+
+        output.extend::<TokenStream>(
+            quote! {
+                pub struct #pin {}
+
+                impl PinId for #pin {
+                    const REG: *const RegisterBlock = #reg;
+                    const ID: u8 = #id;
+                }
+            }
+            .into(),
+        )
+    }
+
+    output.into()
+}
+
+struct Args {
+    pins: HashSet<Ident>,
+}
+
+impl Parse for Args {
+    fn parse(input: ParseStream) -> Result<Self> {
+        let pins = Punctuated::<Ident, Token![,]>::parse_terminated(input as ParseStream)?;
+
+        Ok(Args {
+            pins: pins.into_iter().collect(),
+        })
+    }
 }

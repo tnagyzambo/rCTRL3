@@ -7,6 +7,7 @@ edition = "2021"
 proc-macro = true
 
 [dependencies]
-syn = { version = "*", features = ["extra-traits"] }
-quote = "*"
 proc-macro2 = "*"
+quote = "*"
+samv71-pac = { path = "../../../../samv71-pac" }
+syn = { version = "*", features = ["extra-traits"] }

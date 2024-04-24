@@ -1,4 +1,5 @@
 use core::marker::PhantomData;
+use hal_macro::pins;
 use samv71_pac::pioa::RegisterBlock; // All PIO banks are type aliases of PIOA
 use samv71_pac::{PIOA, PIOB, PIOC, PIOD, PIOE};
 
@@ -212,38 +213,27 @@ pub trait PinId {
     const ID: u8;
 }
 
-// TODO: Make bellow section into a macro
-pub struct PA3 {}
+// The macro calls bellow implement PinId for all pins on the MCU
+// PIOA
+pins!(
+    PA0, PA1, PA2, PA3, PA4, PA5, PA6, PA7, PA8, PA9, PA10, PA11, PA12, PA13, PA14, PA15, PA16,
+    PA17, PA18, PA19, PA20, PA21, PA22, PA23, PA24, PA25, PA26, PA27, PA28, PA29, PA30, PA31
+);
 
-impl PinId for PA3 {
-    const REG: *const RegisterBlock = PIOA::PTR;
-    const ID: u8 = 3;
-}
+// PIOB
+pins!(PB0, PB1, PB2, PB3, PB4, PB5, PB6, PB7, PB8, PB9, PB10, PB11, PB12, PB13);
 
-pub struct PA4 {}
+// PIOC
+pins!(
+    PC0, PC1, PC2, PC3, PC4, PC5, PC6, PC7, PC8, PC9, PC10, PC11, PC12, PC13, PC14, PC15, PC16,
+    PC17, PC18, PC19, PC20, PC21, PC22, PC23, PC24, PC25, PC26, PC27, PC28, PC29, PC30, PC31
+);
 
-impl PinId for PA4 {
-    const REG: *const RegisterBlock = PIOA::PTR;
-    const ID: u8 = 4;
-}
+// PIOD
+pins!(
+    PD0, PD1, PD2, PD3, PD4, PD5, PD6, PD7, PD8, PD9, PD10, PD11, PD12, PD13, PD14, PD15, PD16,
+    PD17, PD18, PD19, PD20, PD21, PD22, PD23, PD24, PD25, PD26, PD27, PD28, PD29, PD30, PD31
+);
 
-pub struct PA9 {}
-
-impl PinId for PA9 {
-    const REG: *const RegisterBlock = PIOA::PTR;
-    const ID: u8 = 9;
-}
-
-pub struct PA23 {}
-
-impl PinId for PA23 {
-    const REG: *const RegisterBlock = PIOA::PTR;
-    const ID: u8 = 23;
-}
-
-pub struct PB1 {}
-
-impl PinId for PB1 {
-    const REG: *const RegisterBlock = PIOB::PTR;
-    const ID: u8 = 1;
-}
+// PIOE
+pins!(PE0, PE1, PE2, PE3, PE4, PE5);
