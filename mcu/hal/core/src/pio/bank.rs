@@ -8,6 +8,7 @@ pub struct Bank<B: BankId> {
 
 impl<B: BankId> Bank<B> {
     pub fn init() -> Self {
+        // Enable clock to PIO bank
         // All PIO banks are controlled by the PCER0 register
         // so we can do this
         let pmc = unsafe { &*PMC::PTR };
@@ -16,14 +17,12 @@ impl<B: BankId> Bank<B> {
         Self { bank: PhantomData }
     }
 
-    pub fn enable_interrupts(&self) -> &Self {
+    pub fn enable_interrupts(&self) {
         unsafe { NVIC::unmask(B::INT) }; // Enable bank interrupts in the NVIC
         NVIC::unpend(B::INT); // Unpend bank interrupts
 
         let reg = unsafe { &*B::REG };
         let _ = reg.isr().read().bits(); // Clear interrupt status register
-
-        self
     }
 
     // TODO: Make this better
@@ -36,11 +35,9 @@ impl<B: BankId> Bank<B> {
     /// The period is calculated by:
     ///
     /// t_debounce = ((div + 1) * 2) * t_slck
-    pub fn set_debounce_period(&self, div: u32) -> &Self {
+    pub fn set_debounce_period(&self, div: u32) {
         let reg = unsafe { &*B::REG };
         reg.scdr().write(|w| unsafe { w.bits(div) }); // Set slow clock divider
-
-        self
     }
 }
 
