@@ -1,6 +1,44 @@
 use core::marker::PhantomData;
+use hal_macro::{BitFieldIterator, TryFromU8};
 use samv71_pac::pioa::RegisterBlock;
 use samv71_pac::{Interrupt, NVIC, PIOA, PIOB, PIOC, PIOD, PIOE, PMC}; // All PIO banks are type aliases of PIOA
+
+#[repr(u8)]
+#[derive(TryFromU8, BitFieldIterator)]
+pub enum PioInterrupt {
+    P31 = 31,
+    P30 = 30,
+    P29 = 29,
+    P28 = 28,
+    P27 = 27,
+    P26 = 26,
+    P25 = 25,
+    P24 = 24,
+    P23 = 23,
+    P22 = 22,
+    P21 = 21,
+    P20 = 20,
+    P19 = 19,
+    P18 = 18,
+    P17 = 17,
+    P16 = 16,
+    P15 = 15,
+    P14 = 14,
+    P13 = 13,
+    P12 = 12,
+    P11 = 11,
+    P10 = 10,
+    P9 = 9,
+    P8 = 8,
+    P7 = 7,
+    P6 = 6,
+    P5 = 5,
+    P4 = 4,
+    P3 = 3,
+    P2 = 2,
+    P1 = 1,
+    P0 = 0,
+}
 
 pub struct Bank<B: BankId> {
     bank: PhantomData<B>,
@@ -25,10 +63,9 @@ impl<B: BankId> Bank<B> {
         let _ = reg.isr().read().bits(); // Clear interrupt status register
     }
 
-    // TODO: Make this better
-    pub fn interrupts(&self) -> u32 {
+    pub fn interrupts(&self) -> PioInterruptIterator {
         let reg = unsafe { &*B::REG };
-        reg.isr().read().bits()
+        PioInterruptIterator::new(reg.isr().read().bits())
     }
 
     /// Set the division of the bank's debounce filter.

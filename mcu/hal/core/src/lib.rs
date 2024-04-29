@@ -8,4 +8,5 @@ pub mod dma;
 pub mod i2c;
 pub mod pio;
 pub mod rtt;
+pub mod spi;
 pub mod uart;

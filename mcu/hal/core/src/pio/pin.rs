@@ -115,15 +115,20 @@ impl<P: PinId> Pin<P, Output> {
     }
 }
 
-impl<P: PinId, M: PinMode + PeripheralId> Pin<P, M> {
-    pub fn init() -> Self {
+pub trait PinPeripheral {
+    fn init() -> Self;
+}
+
+impl<P: PinId, M: PinMode + PeripheralId> PinPeripheral for Pin<P, M> {
+    fn init() -> Self {
         let reg = unsafe { &*P::REG };
 
         // Select peripheral mode
+        // TODO: This does not modify correctly, need to mask r to allow for setting to zero
         reg.abcdsr(0)
-            .modify(|_, w| unsafe { w.bits((M::ABCDSR0 << P::ID) as u32) });
+            .modify(|r, w| unsafe { w.bits(r.bits() | (M::ABCDSR0 as u32) << P::ID) });
         reg.abcdsr(1)
-            .modify(|_, w| unsafe { w.bits((M::ABCDSR1 << P::ID) as u32) });
+            .modify(|r, w| unsafe { w.bits(r.bits() | (M::ABCDSR1 as u32) << P::ID) });
         reg.pdr().write(|w| unsafe { w.bits(1 << P::ID) }); // Enable peripheral mode
 
         Self {

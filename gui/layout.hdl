@@ -1,0 +1,19 @@
+layout {
+    pane edit="src/main.rs" 
+    pane stacked=true {
+        pane command="cargo" {
+            args "build"
+            start_suspended true
+        }
+        pane command="cargo" {
+            args "run"
+            start_suspended true
+        }
+        pane command="rerun" {
+            start_suspended true
+        }
+    }
+    pane size=1 borderless=true {
+        plugin location="zellij:compact-bar"
+    }
+}

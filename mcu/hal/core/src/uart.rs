@@ -18,7 +18,7 @@ pub enum UartInterrupt {
     RXRDY = 0,
 }
 
-pub type Br = u16;
+pub type Br = u32;
 
 pub struct Uart<U: UartId> {
     uart: PhantomData<U>,
@@ -39,15 +39,14 @@ impl<U: UartId> Uart<U> {
         uart.mr().modify(|_, w| w.brsrcck().bit(C::BRSRCCK));
 
         // Calculate baud rate generator clock divisor value and set it
-        let cd = C::FREQ as u16 / (16 * br);
-        uart.brgr().write(|w| unsafe { w.cd().bits(cd) });
+        let cd = C::FREQ as u32 / (16 as u32 * br);
+        defmt::info!("{}", cd);
+        uart.brgr().write(|w| unsafe { w.cd().bits(cd as u16) });
 
         uart.cr().write(|w| {
             w.rxen().set_bit(); // Enable Rx
             w.txen().set_bit() // Enable Tx
         });
-
-        uart.mr().modify(|_, w| w.chmode().local_loopback());
 
         Self {
             uart: PhantomData,

@@ -18,7 +18,7 @@ impl<const F: usize> MainckSource for MainRc<F> {}
 pub struct XtalInt {}
 
 impl Clock for XtalInt {
-    const FREQ: Hz = 12000000;
+    const FREQ: Hz = 12680000;
 }
 
 impl MainckSource for XtalInt {}
@@ -102,23 +102,42 @@ impl<const F: usize> Mainck<MainRc<F>> {
     fn set_source_xtal(wakeup: u8) {
         let pmc = unsafe { &*PMC::PTR };
 
-        pmc.ckgr_mor().write(|w| {
-            w.moscxten().set_bit(); // Enable main xtal oscilator
-            unsafe { w.moscxtst().bits(wakeup) } // Set main crystal osc wake up time
-        });
-
         // Spin until xtal frequency has stabilized
         while pmc.sr().read().moscxts().bit_is_clear() {}
 
         // Switch MAINCK to main crystal osc
-        pmc.ckgr_mor().write(|w| w.moscsel().set_bit());
+        pmc.ckgr_mor().modify(|_, w| {
+            w.key().passwd();
+            w.moscsel().set_bit()
+        });
 
         // Spin until MAICK selection is complete
         while pmc.sr().read().moscsels().bit_is_clear() {}
+
+        while pmc.ckgr_mcfr().read().mainfrdy().bit_is_clear() {}
+        // Read MAINCK frequency
+        let main_f = pmc.ckgr_mcfr().read().mainf().bits() as u32;
+        if main_f == 0 {
+            defmt::error!("MAINCK NOT RUNNING");
+            panic!()
+        }
+        defmt::info!(
+            "MAINCK FREQUENCY: {} Hz ({} MAINCK CYCLES)",
+            main_f * 32768 / 16,
+            main_f
+        );
     }
 
     /// Set MAINCK source to the internal 12 MHz crystal oscillator.
     pub fn set_source_xtal_internal(self) -> Mainck<XtalInt> {
+        let pmc = unsafe { &*PMC::PTR };
+
+        pmc.ckgr_mor().modify(|_, w| {
+            w.key().passwd();
+            w.moscxten().set_bit(); // Enable main xtal oscilator
+            unsafe { w.moscxtst().bits(0xFF) } // Set main crystal osc wake up time
+        });
+
         Self::set_source_xtal(0xFF); // Set xtal source with 62ms wakeup
 
         Mainck {
@@ -132,7 +151,12 @@ impl<const F: usize> Mainck<MainRc<F>> {
         let pmc = unsafe { &*PMC::PTR };
 
         // Bypass internal xtal oscilator
-        pmc.ckgr_mor().modify(|_, w| w.moscxtby().set_bit());
+        pmc.ckgr_mor().modify(|_, w| {
+            w.key().passwd();
+            w.moscxtby().set_bit();
+            w.moscxten().clear_bit(); // Enable main xtal oscilator
+            unsafe { w.moscxtst().bits(0xFF) } // Set main crystal osc wake up time
+        });
 
         Self::set_source_xtal(0); // Must use 0ms wake up in bypass mode
 
