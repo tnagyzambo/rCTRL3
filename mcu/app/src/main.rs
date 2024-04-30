@@ -89,6 +89,8 @@ mod app {
         let mut spi = SpiBus::<Spi0>::init();
         let imu = spi.imu();
         defmt::info!("{:#x}", imu.gyro_id());
+        imu.set_range();
+        imu.set_bw();
 
         // TODO: Move SysTick cofig to function
         // Create SysTick monotonic
@@ -131,9 +133,12 @@ mod app {
     }
 
     // Handle RTT interrupts
-    #[task(binds = RTT, local = [rtt, led0 ])]
+    #[task(binds = RTT, local = [rtt, led0 ], shared = [uart, spi])]
     fn rtt_interrupt_handler(ctx: rtt_interrupt_handler::Context) {
         let rtt_interrupt_handler::LocalResources { rtt, led0, .. } = ctx.local;
+        let rtt_interrupt_handler::SharedResources {
+            mut uart, mut spi, ..
+        } = ctx.shared;
 
         for interrupt in rtt.interrupts() {
             match interrupt {
@@ -142,9 +147,34 @@ mod app {
                     // Flash LED
                     led0.toggle();
 
+                    let mut gyro_x = 0f32;
+                    let mut gyro_y = 0f32;
+                    let mut gyro_z = 0f32;
+
+                    spi.lock(|spi| {
+                        let imu = spi.imu();
+                        gyro_x = imu.gyro_x();
+                        gyro_y = imu.gyro_y();
+                        gyro_z = imu.gyro_z();
+                    });
+
+                    uart.lock(|uart| {
+                        for byte in gyro_x.to_ne_bytes().iter().rev() {
+                            uart.write(*byte);
+                        }
+                        for byte in gyro_y.to_ne_bytes().iter().rev() {
+                            uart.write(*byte);
+                        }
+                        for byte in gyro_z.to_ne_bytes().iter().rev() {
+                            uart.write(*byte);
+                        }
+                        uart.write(0x0A);
+                        uart.write(0x0D);
+                    });
+
                     // Restart timer
                     rtt.rtt.mr().modify(|_, w| w.almien().clear_bit());
-                    rtt.rtt.ar().write(|w| unsafe { w.almv().bits(2500) });
+                    rtt.rtt.ar().write(|w| unsafe { w.almv().bits(500) });
                     rtt.rtt.mr().modify(|_, w| w.almien().set_bit());
                     rtt.rtt.mr().modify(|_, w| w.rttrst().set_bit());
                 }
@@ -205,30 +235,29 @@ mod app {
                     // Button
                     led1.toggle();
 
+                    let mut gyro_x = 0f32;
+                    let mut gyro_y = 0f32;
+                    let mut gyro_z = 0f32;
+
                     spi.lock(|spi| {
                         let imu = spi.imu();
-                        defmt::info!("GYRO: {:#x}", imu.gyro_id());
+                        gyro_x = imu.gyro_x();
+                        gyro_y = imu.gyro_y();
+                        gyro_z = imu.gyro_z();
                     });
-
-                    let gyro_x = 1.0f32;
-                    let gyro_y = 2.0f32;
-                    let gyro_z = 3.0f32;
 
                     uart.lock(|uart| {
                         for byte in gyro_x.to_ne_bytes().iter().rev() {
-                            defmt::info!("{:#x}", byte);
                             uart.write(*byte);
                         }
                         for byte in gyro_y.to_ne_bytes().iter().rev() {
-                            defmt::info!("{:#x}", byte);
                             uart.write(*byte);
                         }
                         for byte in gyro_z.to_ne_bytes().iter().rev() {
-                            defmt::info!("{:#x}", byte);
                             uart.write(*byte);
                         }
                         uart.write(b'\n');
-                        defmt::info!("{:#}, {:#}, {:#}", 1.0, 2.0, 3.0);
+                        defmt::info!("{:#}, {:#}, {:#}", gyro_x, gyro_y, gyro_z);
                     });
                 }
                 _ => (),

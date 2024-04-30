@@ -97,6 +97,7 @@ impl<U: UartId> Uart<U> {
 
     pub fn write(&self, data: u8) {
         let uart = unsafe { &*U::REG };
+        while uart.sr().read().txrdy().bit_is_clear() {}
         uart.thr().write(|w| unsafe { w.txchr().bits(data) });
     }
 }

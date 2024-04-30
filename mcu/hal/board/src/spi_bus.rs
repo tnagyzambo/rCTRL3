@@ -29,7 +29,7 @@ impl<I: SpiId> SpiBus<I> {
             unsafe { w.dlybct().bits(0x20) };
             unsafe { w.scbr().bits(250) }; // Serial Clock Bit Rate
                                            //w.cpol().idle_high();
-                                           //w.ncpha().valid_leading_edge();
+            w.ncpha().valid_leading_edge();
             w.bits_()._16_bit(); // Bits per transfer
             w.csaat().clear_bit()
         });
