@@ -12,8 +12,8 @@ use samv71_pac::{Interrupt, NVIC, PMC, SPI0, SPI1};
 //
 
 pub trait SpiDevice<C: ChipSelect> {
-    fn read(&self) -> u16;
-    fn write(&self, data: u16);
+    fn read() -> u16;
+    fn write(data: u16, lastxfer: bool);
 }
 
 #[repr(u8)]
@@ -94,23 +94,27 @@ impl<I: SpiId> Spi<I, HostVar> {
     pub fn cs2(&self) -> &impl SpiDevice<CS<2>> {
         self
     }
+
+    pub fn cs3(&self) -> &impl SpiDevice<CS<3>> {
+        self
+    }
 }
 
 impl<I: SpiId, C: ChipSelect> SpiDevice<C> for Spi<I, HostVar> {
-    fn write(&self, data: u16) {
+    fn write(data: u16, lastxfer: bool) {
         let spi = unsafe { &*I::REG };
 
         // Spin until Tx ready
         while spi.sr().read().tdre().bit_is_clear() {}
 
         spi.tdr().write(|w| {
-            //w.lastxfer().set_bit();
+            w.lastxfer().bit(lastxfer);
             unsafe { w.pcs().bits(C::PCS) }; // Chip select
             unsafe { w.td().bits(data) } // Tx data
         });
     }
 
-    fn read(&self) -> u16 {
+    fn read() -> u16 {
         let spi = unsafe { &*I::REG };
 
         // Spin until Rx ready

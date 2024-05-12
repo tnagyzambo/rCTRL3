@@ -4,11 +4,12 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-anyhow = "1.0"
+anyhow = "1.0.83"
 eframe = "0.23"
 egui_plot = "0.23"
 rerun = "0.15.1"
 mio-serial = "5.0.5"
+postcard = { version = "1.0.8", features = ["use-defmt"] }
 tokio = { version = "1.37.0", features = ["net", "rt-multi-thread", "time", "macros"] }
 tokio-serial = "5.4.4"
 bytes = "1"
@@ -16,3 +17,5 @@ tokio-util = { version = "0.7.10", features = ["codec"] }
 futures = "0.3"
 tracing = "0.1.37"
 nalgebra = "0.32.5"                
+rctrl-lib = { path = "../mcu/lib" }
+serde = { version = "1.0.201", default-features = false, features = ["derive"] }

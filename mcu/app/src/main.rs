@@ -12,16 +12,18 @@ use panic_probe as _;
 mod app {
     use core::sync::atomic::{AtomicUsize, Ordering};
     use hal::{
-        board::{bmi088::BMI088, SpiBus},
+        board::{bmi088, SpiBus},
         core::{
             clock::*,
             pac,
             pio::*,
             rtt::{Rtt, RttInterrupt},
             spi::{Spi0, SpiInterrupt},
-            uart::{Uart, Uart1, UartInterrupt},
+            uart::{Uart, Uart1},
         },
     };
+    use postcard::to_slice_cobs;
+    use rctrl_lib::SerialPacket;
     use rtic_monotonics::systick::*;
 
     const F_SLCK: u32 = 32768; // 32.768 kHz
@@ -49,7 +51,7 @@ mod app {
     }
 
     #[init()]
-    fn init(mut ctx: init::Context) -> (Shared, Local) {
+    fn init(ctx: init::Context) -> (Shared, Local) {
         // Init start
         defmt::info!("INIT");
 
@@ -60,7 +62,7 @@ mod app {
         unsafe { nvic.set_priority(pac::Interrupt::RTT, 32) };
 
         // Init device clocks
-        let slck = Slck::default();
+        let _slck = Slck::default();
         let mainck = Mainck::default().set_source_xtal_internal();
         let mck = Mck::<_, mck::Div<1>, mck::Div<1>>::from(mainck);
 
@@ -87,10 +89,14 @@ mod app {
 
         // Init SPI
         let mut spi = SpiBus::<Spi0>::init();
-        let imu = spi.imu();
-        defmt::info!("{:#x}", imu.gyro_id());
-        imu.set_range();
-        imu.set_bw();
+        let mut gyro = spi.gyro();
+        defmt::assert!(gyro.id_ok(), "Gyroscope ID match failed");
+        gyro.set_range(bmi088::gyro::Range::_250DegSec);
+        gyro.set_bw(bmi088::gyro::Bandwidth::Odr400Filter47);
+        let mut accl = spi.accelerometer();
+        accl.init_spi();
+        accl.enable();
+        defmt::assert!(accl.id_ok(), "Accelerometer ID match failed");
 
         // TODO: Move SysTick cofig to function
         // Create SysTick monotonic
@@ -133,9 +139,14 @@ mod app {
     }
 
     // Handle RTT interrupts
-    #[task(binds = RTT, local = [rtt, led0 ], shared = [uart, spi])]
+    #[task(binds = RTT, local = [rtt, led0, uart_buf: [u8; 50] = [0u8; 50]], shared = [uart, spi])]
     fn rtt_interrupt_handler(ctx: rtt_interrupt_handler::Context) {
-        let rtt_interrupt_handler::LocalResources { rtt, led0, .. } = ctx.local;
+        let rtt_interrupt_handler::LocalResources {
+            rtt,
+            led0,
+            uart_buf,
+            ..
+        } = ctx.local;
         let rtt_interrupt_handler::SharedResources {
             mut uart, mut spi, ..
         } = ctx.shared;
@@ -147,30 +158,36 @@ mod app {
                     // Flash LED
                     led0.toggle();
 
-                    let mut gyro_x = 0f32;
-                    let mut gyro_y = 0f32;
-                    let mut gyro_z = 0f32;
+                    let packet = spi.lock(|spi| {
+                        let gyro = spi.gyro();
+                        let gyro_x = gyro.x();
+                        let gyro_y = gyro.y();
+                        let gyro_z = gyro.z();
 
-                    spi.lock(|spi| {
-                        let imu = spi.imu();
-                        gyro_x = imu.gyro_x();
-                        gyro_y = imu.gyro_y();
-                        gyro_z = imu.gyro_z();
+                        let accl = spi.accelerometer();
+                        let accl_x = accl.x();
+                        let accl_y = accl.y();
+                        let accl_z = -accl.z();
+
+                        SerialPacket {
+                            accl_x,
+                            accl_y,
+                            accl_z,
+                            gyro_x,
+                            gyro_y,
+                            gyro_z,
+                        }
                     });
 
-                    uart.lock(|uart| {
-                        for byte in gyro_x.to_ne_bytes().iter().rev() {
-                            uart.write(*byte);
+                    match to_slice_cobs(&packet, uart_buf) {
+                        Ok(data) => {
+                            // TODO: Replace with DMA transfer
+                            for byte in data {
+                                uart.lock(|uart| uart.write(*byte));
+                            }
                         }
-                        for byte in gyro_y.to_ne_bytes().iter().rev() {
-                            uart.write(*byte);
-                        }
-                        for byte in gyro_z.to_ne_bytes().iter().rev() {
-                            uart.write(*byte);
-                        }
-                        uart.write(0x0A);
-                        uart.write(0x0D);
-                    });
+                        Err(e) => defmt::error!("Error encoding serial data: {}", e),
+                    };
 
                     // Restart timer
                     rtt.rtt.mr().modify(|_, w| w.almien().clear_bit());
@@ -222,43 +239,15 @@ mod app {
     //}
 
     // Handle button press
-    #[task(binds = PIOA, local = [button, banka, led1], shared = [uart, spi])]
+    #[task(binds = PIOA, local = [button, banka, led1] )]
     fn button(ctx: button::Context) {
         let button::LocalResources { banka, led1, .. } = ctx.local;
-        let button::SharedResources {
-            mut uart, mut spi, ..
-        } = ctx.shared;
 
         for interrupt in banka.interrupts() {
             match interrupt {
                 PioInterrupt::P9 => {
                     // Button
                     led1.toggle();
-
-                    let mut gyro_x = 0f32;
-                    let mut gyro_y = 0f32;
-                    let mut gyro_z = 0f32;
-
-                    spi.lock(|spi| {
-                        let imu = spi.imu();
-                        gyro_x = imu.gyro_x();
-                        gyro_y = imu.gyro_y();
-                        gyro_z = imu.gyro_z();
-                    });
-
-                    uart.lock(|uart| {
-                        for byte in gyro_x.to_ne_bytes().iter().rev() {
-                            uart.write(*byte);
-                        }
-                        for byte in gyro_y.to_ne_bytes().iter().rev() {
-                            uart.write(*byte);
-                        }
-                        for byte in gyro_z.to_ne_bytes().iter().rev() {
-                            uart.write(*byte);
-                        }
-                        uart.write(b'\n');
-                        defmt::info!("{:#}, {:#}, {:#}", gyro_x, gyro_y, gyro_z);
-                    });
                 }
                 _ => (),
             }

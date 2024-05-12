@@ -10,6 +10,8 @@ defmt = { version = "0.3", features = ["encoding-rzcobs"] }
 defmt-rtt = "0.4.0"
 hal = { path = "../hal" }
 panic-probe = { version = "0.3", features = ["print-defmt"] }
+postcard = { version = "1.0.8", features = ["use-defmt"] }
+rctrl-lib = { path = "../lib" }
 rtic = { version = "2.0.0", features = [ "thumbv7-backend" ] }
 rtic-monotonics = { version = "1.0.0", features = [ "cortex-m-systick" ]}
 samv71-pac = { path = "../../../samv71-pac", features = ["rt", "critical-section"] }
