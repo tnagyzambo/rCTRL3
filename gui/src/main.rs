@@ -1,3 +1,7 @@
+#![feature(generic_const_exprs)]
+#![feature(maybe_uninit_uninit_array)]
+#![feature(maybe_uninit_array_assume_init)]
+
 mod gui;
 
 // We run the gui inside of a tokio runtime

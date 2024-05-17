@@ -165,8 +165,8 @@ mod app {
                         let gyro_z = gyro.z();
 
                         let accl = spi.accelerometer();
-                        let accl_x = accl.x();
-                        let accl_y = accl.y();
+                        let accl_x = -accl.x();
+                        let accl_y = -accl.y();
                         let accl_z = -accl.z();
 
                         SerialPacket {
